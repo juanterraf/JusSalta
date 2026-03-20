@@ -182,13 +182,25 @@
     if (!params.at) throw new Error('No se pudo obtener token CSRF');
 
     const size = pdfBytes.byteLength || pdfBytes.length;
+    const sourcePath = `/notebook/${projectId}`;
+    const reqId = Math.floor(Math.random() * 900000) + 100000;
+
+    // Build the upload initiation URL with all required query params
+    const uploadInitUrl = `/_/LabsTailwindUi/upload`
+      + `?rpcids=q83me`
+      + `&source-path=${encodeURIComponent(sourcePath)}`
+      + `&bl=${encodeURIComponent(params.bl)}`
+      + `&f.sid=${encodeURIComponent(params.fsid)}`
+      + `&hl=es`
+      + `&_reqid=${reqId}`
+      + `&rt=c`;
 
     // Step 1: Initiate resumable upload
     const initPayload = `f.req=${encodeURIComponent(JSON.stringify([[
       ["q83me", JSON.stringify([[projectId], null, [[[filename, size]], 1]]), null, "generic"]
     ]]))}&at=${encodeURIComponent(params.at)}&`;
 
-    const initResp = await fetch('/_/LabsTailwindUi/upload', {
+    const initResp = await fetch(uploadInitUrl, {
       method: 'POST',
       headers: {
         'X-Same-Domain': '1',
@@ -202,11 +214,20 @@
       body: initPayload,
     });
 
-    if (!initResp.ok) throw new Error(`Upload init failed: ${initResp.status}`);
+    if (!initResp.ok) {
+      const errText = await initResp.text().catch(() => '');
+      throw new Error(`Upload init failed: ${initResp.status} ${errText.substring(0, 100)}`);
+    }
 
     // Get the upload URL from response header
     const uploadUrl = initResp.headers.get('X-Goog-Upload-URL');
-    if (!uploadUrl) throw new Error('No upload URL returned');
+    if (!uploadUrl) {
+      // Try to find it in other headers
+      const allHeaders = {};
+      initResp.headers.forEach((v, k) => allHeaders[k] = v);
+      console.log('[SAE NLM] Init response headers:', allHeaders);
+      throw new Error('No upload URL returned');
+    }
 
     // Step 2: Upload the actual bytes
     const uploadResp = await fetch(uploadUrl, {
