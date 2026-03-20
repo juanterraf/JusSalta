@@ -1430,6 +1430,7 @@ function initImportListeners() {
   });
 
   $('#btn-import-clear').addEventListener('click', resetImport);
+  $('#btn-new-import').addEventListener('click', resetImport);
   $('#btn-start-import').addEventListener('click', startImport);
   $('#btn-cancel-import').addEventListener('click', () => { state.importCancelled = true; });
   $('#btn-export-results').addEventListener('click', exportResults);
@@ -1456,6 +1457,7 @@ async function restoreLastImport() {
   $('#import-config').classList.add('hidden');
   $('#import-progress').classList.remove('hidden');
   $('#btn-cancel-import').classList.add('hidden');
+  $('#btn-new-import').classList.remove('hidden');
   $('#btn-export-results').classList.remove('hidden');
 
   // Hide warning banner in restored view
@@ -1588,6 +1590,9 @@ function resetImport() {
   $('#import-upload').classList.remove('hidden');
   $('#import-config').classList.add('hidden');
   $('#import-progress').classList.add('hidden');
+  $('#btn-new-import').classList.add('hidden');
+  $('#btn-follow-all').classList.add('hidden');
+  $('#btn-export-results').classList.add('hidden');
   $('#inp-file').value = '';
 }
 
@@ -1826,6 +1831,7 @@ async function startImport() {
     ? `Cancelado (${state.importResults.length}/${cases.length})`
     : `Completado: ${summary} de ${cases.length}`;
   $('#btn-cancel-import').classList.add('hidden');
+  $('#btn-new-import').classList.remove('hidden');
   $('#btn-export-results').classList.remove('hidden');
   if (okCount > 0) {
     $('#btn-follow-all').classList.remove('hidden');
