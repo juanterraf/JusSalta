@@ -258,5 +258,11 @@
   };
 
   // Signal that the bridge is ready
+  const params = getSessionParams();
+  console.log('[SAE NLM Bridge] Ready. Session params:', {
+    at: params.at ? params.at.substring(0, 20) + '...' : 'NOT FOUND',
+    fsid: params.fsid ? String(params.fsid).substring(0, 20) + '...' : 'NOT FOUND',
+    bl: params.bl || 'NOT FOUND',
+  });
   window.dispatchEvent(new CustomEvent('sae-nlm-bridge-ready'));
 })();

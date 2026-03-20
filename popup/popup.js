@@ -2119,13 +2119,44 @@ async function sendToNotebookLM() {
     await waitForTabLoad(nlmTab.id, 10000);
     await sleep(2000);
 
-    // Re-inject bridge (new page navigation)
-    await chrome.scripting.executeScript({
-      target: { tabId: nlmTab.id },
-      files: ['content/notebooklm-bridge.js'],
-      world: 'MAIN',
-    });
-    await sleep(1000);
+    // Re-inject bridge (new page navigation) with retries
+    let bridgeReady = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await sleep(2000);
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: nlmTab.id },
+          files: ['content/notebooklm-bridge.js'],
+          world: 'MAIN',
+        });
+        await sleep(1000);
+
+        // Verify bridge has session params
+        const check = await chrome.scripting.executeScript({
+          target: { tabId: nlmTab.id },
+          world: 'MAIN',
+          func: () => {
+            const b = window.__SAE_NLM_BRIDGE;
+            if (!b?.ready) return { ready: false, reason: 'bridge not found' };
+            const p = b.getSessionParams();
+            return { ready: !!p.at, at: p.at ? 'ok' : 'missing', fsid: p.fsid ? 'ok' : 'missing', bl: p.bl ? 'ok' : 'missing' };
+          },
+        });
+        const status = check?.[0]?.result;
+        console.log('[SAE] Bridge check attempt', attempt + 1, status);
+        if (status?.ready) {
+          bridgeReady = true;
+          break;
+        }
+      } catch (err) {
+        console.log('[SAE] Bridge inject attempt', attempt + 1, 'failed:', err.message);
+      }
+      progressText.textContent = `Esperando que cargue NotebookLM (intento ${attempt + 2}/5)...`;
+    }
+
+    if (!bridgeReady) {
+      throw new Error('No se pudo conectar con NotebookLM despues de 5 intentos. Recarga la pagina de NotebookLM y volve a intentar.');
+    }
 
     // Step 5: Build consolidated text with all tramites
     progressText.textContent = 'Preparando textos...';
@@ -2168,15 +2199,14 @@ async function sendToNotebookLM() {
 
     const fullText = headerText + tramitesTexts.join('\n\n---\n\n');
 
-    // Step 6: Add text as source
-    progressText.textContent = 'Agregando texto del expediente...';
-    progressFill.style.width = '30%';
+    // Step 6: Add text sources
+    progressText.textContent = 'Subiendo fuentes de texto...';
+    progressFill.style.width = '50%';
 
-    // Split into chunks if text is very long (max ~500KB per source)
+    // Split into chunks if text is very long (NLM ~500KB per source limit)
     const MAX_TEXT_SIZE = 400000;
     const textChunks = [];
     if (fullText.length > MAX_TEXT_SIZE) {
-      // Split by tramites
       let currentChunk = headerText;
       let chunkNum = 1;
       for (const tt of tramitesTexts) {
@@ -2191,19 +2221,30 @@ async function sendToNotebookLM() {
         textChunks.push({ title: `${notebookTitle} - Parte ${chunkNum}`, text: currentChunk });
       }
     } else {
-      textChunks.push({ title: `Tramites - ${notebookTitle}`, text: fullText });
+      textChunks.push({ title: `Expediente ${expNum} - ${caratula}`, text: fullText });
     }
+
+    let successCount = 0;
+    let failCount = 0;
 
     for (let i = 0; i < textChunks.length; i++) {
       const chunk = textChunks[i];
-      progressText.textContent = `Subiendo texto ${i + 1}/${textChunks.length}...`;
+      const pct = 50 + Math.round((i / textChunks.length) * 45);
+      progressFill.style.width = `${pct}%`;
+      progressText.textContent = textChunks.length > 1
+        ? `Subiendo parte ${i + 1}/${textChunks.length}...`
+        : 'Subiendo expediente completo...';
 
       const textResult = await chrome.scripting.executeScript({
         target: { tabId: nlmTab.id },
         world: 'MAIN',
         func: async (pid, title, content) => {
           try {
-            await window.__SAE_NLM_BRIDGE.addTextSource(pid, title, content);
+            const b = window.__SAE_NLM_BRIDGE;
+            if (!b?.ready) return { success: false, error: 'Bridge no disponible' };
+            const p = b.getSessionParams();
+            if (!p.at) return { success: false, error: 'Token CSRF no encontrado' };
+            await b.addTextSource(pid, title, content);
             return { success: true };
           } catch (err) {
             return { success: false, error: err.message };
@@ -2212,101 +2253,23 @@ async function sendToNotebookLM() {
         args: [projectId, chunk.title, chunk.text],
       });
 
-      if (!textResult?.[0]?.result?.success) {
-        console.warn('Text source failed:', textResult?.[0]?.result?.error);
+      const res = textResult?.[0]?.result;
+      if (res?.success) {
+        successCount++;
+      } else {
+        console.error('[SAE] Text source failed:', res?.error);
+        failCount++;
       }
-      await sleep(1500);
-    }
-
-    // Step 7: Upload PDFs
-    const pdfTramites = [];
-    for (let i = 0; i < state.tramites.length; i++) {
-      const t = state.tramites[i];
-      // Check if this tramite has a downloadable PDF
-      pdfTramites.push({ index: i, tramite: t });
-    }
-
-    // Ask user if too many PDFs
-    const MAX_PDFS = 30;
-    let pdfsToUpload = pdfTramites;
-    if (pdfsToUpload.length > MAX_PDFS) {
-      pdfsToUpload = pdfsToUpload.slice(0, MAX_PDFS);
-      showToast(`Subiendo los primeros ${MAX_PDFS} PDFs de ${pdfTramites.length}`, 'info');
-    }
-
-    let pdfSuccess = 0;
-    let pdfFail = 0;
-    const totalSteps = textChunks.length + pdfsToUpload.length;
-
-    for (let i = 0; i < pdfsToUpload.length; i++) {
-      const { index, tramite: t } = pdfsToUpload[i];
-      const num = String(index + 1).padStart(3, '0');
-      const dateStr = t.fech || (t.fecha ? t.fecha.replace(/\//g, '-') : 'sf');
-      const desc = sanitizeFilename(t.dscr || 'tramite');
-      const filename = `${num}_${dateStr}_${desc}.pdf`;
-
-      const pct = 30 + Math.round(((textChunks.length + i) / totalSteps) * 70);
-      progressFill.style.width = `${pct}%`;
-      progressText.textContent = `Subiendo PDF ${i + 1}/${pdfsToUpload.length}: ${t.dscr || 'tramite'}...`;
-
-      try {
-        // Get PDF URL
-        const pdfUrl = await getTramitePdfUrl(caseData, t.histid);
-        if (!pdfUrl) {
-          pdfFail++;
-          continue;
-        }
-
-        // Download PDF bytes via background worker
-        const pdfData = await downloadUrl(pdfUrl);
-        if (!pdfData?.base64) {
-          pdfFail++;
-          continue;
-        }
-
-        // Upload to NotebookLM
-        const uploadResult = await chrome.scripting.executeScript({
-          target: { tabId: nlmTab.id },
-          world: 'MAIN',
-          func: async (pid, fname, base64Data) => {
-            try {
-              // Convert base64 to Uint8Array
-              const binary = atob(base64Data);
-              const bytes = new Uint8Array(binary.length);
-              for (let j = 0; j < binary.length; j++) {
-                bytes[j] = binary.charCodeAt(j);
-              }
-              await window.__SAE_NLM_BRIDGE.uploadPdf(pid, fname, bytes);
-              return { success: true };
-            } catch (err) {
-              return { success: false, error: err.message };
-            }
-          },
-          args: [projectId, filename, pdfData.base64],
-        });
-
-        if (uploadResult?.[0]?.result?.success) {
-          pdfSuccess++;
-        } else {
-          console.warn(`PDF upload failed for ${filename}:`, uploadResult?.[0]?.result?.error);
-          pdfFail++;
-        }
-      } catch (err) {
-        console.warn(`PDF error for ${filename}:`, err.message);
-        pdfFail++;
-      }
-
-      // Rate limiting
-      await sleep(2000);
+      if (i < textChunks.length - 1) await sleep(1500);
     }
 
     // Done!
     progressFill.style.width = '100%';
-    const msg = pdfFail > 0
-      ? `NotebookLM: ${textChunks.length} texto(s) + ${pdfSuccess} PDF(s) subidos (${pdfFail} fallaron)`
-      : `NotebookLM: ${textChunks.length} texto(s) + ${pdfSuccess} PDF(s) subidos`;
+    const msg = failCount > 0
+      ? `NotebookLM: ${successCount} fuente(s) subidas, ${failCount} fallaron. Revisa la consola de NotebookLM.`
+      : `NotebookLM: expediente cargado como ${successCount} fuente(s)`;
     progressText.textContent = msg;
-    showToast(msg, 'success');
+    showToast(msg, failCount > 0 ? 'error' : 'success');
 
     // Focus the NotebookLM tab
     chrome.tabs.update(nlmTab.id, { active: true });
