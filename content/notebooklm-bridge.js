@@ -79,11 +79,15 @@
       body,
     });
 
-    if (!resp.ok) throw new Error(`NotebookLM API error: ${resp.status}`);
-
     const text = await resp.text();
+    console.log(`[SAE NLM] ${rpcId} response status:`, resp.status, 'body preview:', text.substring(0, 500));
+
+    if (!resp.ok) throw new Error(`NotebookLM API error: ${resp.status} - ${text.substring(0, 200)}`);
+
     // Response starts with )]}' followed by data
-    return parseBatchResponse(text);
+    const parsed = parseBatchResponse(text);
+    console.log(`[SAE NLM] ${rpcId} parsed result:`, JSON.stringify(parsed)?.substring(0, 300));
+    return parsed;
   }
 
   // Parse batchexecute response format
@@ -164,15 +168,17 @@
   // Add a text source (Copied Text)
   async function addTextSource(projectId, title, textContent) {
     // izAoDd: add inline text source
-    // Payload: [[[null, [title, textContent]], null, projectId, 1]]
     const textLength = new TextEncoder().encode(textContent).length;
+    console.log(`[SAE NLM] addTextSource: project=${projectId}, title="${title}", textLen=${textLength}`);
 
-    const result = await batchExecute('izAoDd', [
-      [[null, [title, textContent]], null, projectId, 1]
-    ], {
+    const payload = [[[null, [title, textContent]], null, projectId, 1]];
+    console.log('[SAE NLM] Payload structure:', JSON.stringify(payload).substring(0, 200));
+
+    const result = await batchExecute('izAoDd', payload, {
       'x-goog-ext-353267353-jspb': `[null,null,null,${textLength}]`,
     });
 
+    console.log('[SAE NLM] addTextSource result:', result);
     return result;
   }
 
