@@ -2243,21 +2243,22 @@ async function sendToNotebookLM() {
             const b = window.__SAE_NLM_BRIDGE;
             if (!b?.ready) return { success: false, error: 'Bridge no disponible' };
             const p = b.getSessionParams();
-            if (!p.at) return { success: false, error: 'Token CSRF no encontrado' };
-            await b.addTextSource(pid, title, content);
-            return { success: true };
+            if (!p.at) return { success: false, error: 'Token CSRF no encontrado', params: { at: !!p.at, fsid: !!p.fsid, bl: !!p.bl } };
+            const result = await b.addTextSource(pid, title, content);
+            return { success: true, result: JSON.stringify(result)?.substring(0, 500) };
           } catch (err) {
-            return { success: false, error: err.message };
+            return { success: false, error: err.message, stack: err.stack?.substring(0, 300) };
           }
         },
         args: [projectId, chunk.title, chunk.text],
       });
 
       const res = textResult?.[0]?.result;
+      console.log('[SAE NLM] addTextSource result:', JSON.stringify(res));
       if (res?.success) {
         successCount++;
       } else {
-        console.error('[SAE] Text source failed:', res?.error);
+        console.error('[SAE NLM] Text source FAILED:', res);
         failCount++;
       }
       if (i < textChunks.length - 1) await sleep(1500);
