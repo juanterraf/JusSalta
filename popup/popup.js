@@ -734,18 +734,14 @@ function buildFullCaseSummary(caseData, tramites) {
   lines.push('── CRONOLOGÍA DE TRÁMITES ──');
   lines.push('');
 
-  // All tramites
+  // All tramites - description and date only, no full text
   tramites.forEach((t, i) => {
-    lines.push(`[${i + 1}] ${t.fecha || 'S/F'} - ${t.dscr || 'Sin descripcion'}`);
-    if (t.texto) {
-      const text = htmlToPlainText(t.texto);
-      lines.push(`    ${text.replace(/\n/g, '\n    ')}`);
-    }
     const archivos = Array.isArray(t.archivos) ? t.archivos : [];
-    if (archivos.length) {
-      lines.push(`    [${archivos.length} archivo(s): ${archivos.map(a => `${a.nombre}.${a.extension}`).join(', ')}]`);
-    }
-    lines.push('');
+    const extras = [];
+    if (t.firm) extras.push('Firmado');
+    if (archivos.length) extras.push(`${archivos.length} archivo(s)`);
+    const suffix = extras.length ? ` [${extras.join(', ')}]` : '';
+    lines.push(`[${i + 1}] ${t.fecha || 'S/F'} - ${t.dscr || 'Sin descripcion'}${suffix}`);
   });
 
   // Estado actual (last tramite by date)
@@ -1977,32 +1973,48 @@ async function generateAIReport() {
     const caseData = state.currentCase;
     const tramitesText = state.tramites.map((t, i) => {
       const texto = t.texto ? htmlToPlainText(t.texto) : '';
-      const preview = texto.length > 500 ? texto.substring(0, 500) + '...' : texto;
-      return `[${i + 1}] ${t.fecha || 'S/F'} - ${t.dscr || ''}\n${preview}`;
-    }).join('\n\n');
+      // Include full text for important tramites, summary for routine ones
+      const maxLen = 1500;
+      const content = texto.length > maxLen ? texto.substring(0, maxLen) + '...' : texto;
+      return `[${i + 1}] ${t.fecha || 'S/F'} | ${t.dscr || 'Sin desc.'}\n${content}`;
+    }).join('\n---\n');
 
-    const prompt = `Sos un abogado argentino experto en derecho procesal. Analiza el siguiente expediente judicial y genera un informe profesional en español.
+    const prompt = `Sos un abogado procesalista argentino. Analiza este expediente judicial y genera un informe profesional completo.
 
-EXPEDIENTE: ${caseData.nro_expediente || 'N/D'}
-CARATULA: ${caseData.caratula || 'N/D'}
-ACTOR: ${caseData.acto || caseData.actor || 'N/D'}
-DEMANDADO: ${caseData.dema || caseData.demandado || 'N/D'}
-JUZGADO: ${caseData.juzgado?.dscr || 'N/D'}
-TIPO DE PROCESO: ${caseData.tipo_proceso || 'N/D'}
-TOTAL DE TRAMITES: ${state.tramites.length}
+DATOS DEL EXPEDIENTE:
+- Expediente: ${caseData.nro_expediente || 'N/D'}
+- Caratula: ${caseData.caratula || 'N/D'}
+- Actor: ${caseData.acto || caseData.actor || 'N/D'}
+- Demandado: ${caseData.dema || caseData.demandado || 'N/D'}
+- Juzgado: ${caseData.juzgado?.dscr || 'N/D'}
+- Tipo: ${caseData.tipo_proceso || 'N/D'}
+- Total de tramites: ${state.tramites.length}
 
-CRONOLOGIA DE TRAMITES:
+TRAMITES (del mas reciente al mas antiguo):
 ${tramitesText}
 
-Genera un informe con las siguientes secciones:
-1. RESUMEN EJECUTIVO (2-3 oraciones sobre el estado actual de la causa)
-2. OBJETO DE LA CAUSA (que se reclama/disputa)
-3. PARTES INTERVINIENTES
-4. CRONOLOGIA PROCESAL RELEVANTE (solo los hitos importantes, no todos los tramites)
-5. ESTADO ACTUAL Y PROXIMOS PASOS PROBABLES
-6. OBSERVACIONES (plazos vencidos, irregularidades, o puntos de atencion)
+INSTRUCCIONES:
+Genera un informe con estas secciones. Se completo pero conciso:
 
-Se conciso y profesional. No inventes datos que no esten en los tramites.`;
+1. RESUMEN EJECUTIVO
+Descripcion clara del estado actual de la causa en 3-4 oraciones.
+
+2. OBJETO DE LA CAUSA
+Que se reclama o disputa. Tipo de proceso y pretension.
+
+3. PARTES
+Actor, demandado y otros intervinientes que surjan de los tramites.
+
+4. CRONOLOGIA PROCESAL RELEVANTE
+Solo los hitos procesales importantes (demanda, contestacion, prueba, sentencia, recursos, etc). No listar cada proveido de mero tramite.
+
+5. ESTADO ACTUAL
+Cual es la situacion procesal hoy. Que se espera como proximo paso.
+
+6. OBSERVACIONES
+Plazos, irregularidades, puntos de atencion o riesgos que surjan del expediente.
+
+IMPORTANTE: No inventes datos. Si algo no surge de los tramites, indicalo. Usa lenguaje juridico argentino.`;
 
     const response = await callGemini(apiKey, prompt);
 
@@ -2024,7 +2036,7 @@ Se conciso y profesional. No inventes datos que no esten en los tramites.`;
 }
 
 async function callGemini(apiKey, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
   const resp = await fetch(url, {
     method: 'POST',
@@ -2033,7 +2045,7 @@ async function callGemini(apiKey, prompt) {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 2000,
+        maxOutputTokens: 8000,
       },
     }),
   });
