@@ -13,6 +13,7 @@ Herramienta gratuita para profesionales del derecho.
 - **Descarga completa** - Descarga todos los tramites como ZIP incluyendo PDFs, textos de proveidos y un informe general.
 - **Seguimiento de causas** - Agrega expedientes a tu lista de seguimiento. La extension verifica cada 30 minutos si hay movimientos nuevos y te notifica.
 - **Importacion masiva** - Carga un archivo Excel o CSV con numeros de expediente para consultar multiples causas de una vez.
+- **Enviar a NotebookLM** - Crea un cuaderno en Google NotebookLM con todos los tramites del expediente como fuentes individuales. Si tenes configurada la API key de Gemini, extrae automaticamente el texto de los PDFs adjuntos.
 
 ## Instalacion
 
@@ -99,6 +100,26 @@ Hace click en **Descargar Todo (ZIP)** para obtener un archivo con:
 
 > **Nota:** La importacion requiere estar en la pagina del buscador del SAE (necesita el captcha). Procesa ~10-20 expedientes por minuto.
 
+### Enviar a NotebookLM
+
+Desde la pestana "Expediente", hace click en **Enviar a NotebookLM** para crear un cuaderno con todo el contenido del expediente.
+
+La extension:
+1. Abre NotebookLM y crea un cuaderno nuevo
+2. Sube un resumen con los datos del expediente y un indice de tramites
+3. Sube cada tramite como fuente individual (fecha, tipo y texto completo)
+4. Si tenes API key de Gemini configurada, descarga los PDFs adjuntos y extrae su texto para incluirlo en la fuente
+
+**Requisitos:**
+- Estar logueado en Google (sesion activa en el navegador)
+- Para extraccion de PDFs: API key de Gemini configurada en Info > Configuracion IA
+
+**Limites:**
+- Maximo 50 fuentes por cuaderno (limite de NotebookLM)
+- No cerrar el popup mientras se suben las fuentes
+
+> **Nota:** La integracion con NotebookLM usa la API interna de Google y puede dejar de funcionar si Google modifica sus endpoints. No es una integracion oficial.
+
 ## Estructura del proyecto
 
 ```
@@ -110,10 +131,11 @@ extensionSAE/
     popup.js
   background/            # Service worker (notificaciones, descargas)
     service-worker.js
-  content/               # Scripts inyectados en el portal SAE
-    content-script.js
+  content/               # Scripts inyectados en paginas web
+    content-script.js      # Content script para el portal SAE
     content-style.css
-    inject-intercept.js
+    inject-interceptor.js  # Interceptor de fetch/XHR del SAE (MAIN world)
+    notebooklm-bridge.js   # Bridge para la API de NotebookLM (MAIN world)
   icons/                 # Iconos de la extension
   lib/                   # Librerias (JSZip, SheetJS)
 ```
