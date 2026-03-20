@@ -2158,117 +2158,87 @@ async function sendToNotebookLM() {
       throw new Error('No se pudo conectar con NotebookLM despues de 5 intentos. Recarga la pagina de NotebookLM y volve a intentar.');
     }
 
-    // Step 5: Build consolidated text with all tramites
-    progressText.textContent = 'Preparando textos...';
+    // Step 5: Fetch text for all tramites and upload as individual sources
+    progressText.textContent = 'Preparando tramites...';
     progressFill.style.width = '20%';
 
-    // Fetch texts for all tramites that don't have them yet
-    const tramitesForText = [];
-    for (let i = 0; i < state.tramites.length; i++) {
-      const t = state.tramites[i];
-      if (!t.texto && t.link) {
-        try {
-          progressText.textContent = `Obteniendo texto ${i + 1}/${state.tramites.length}...`;
-          t.texto = await getTramiteText(caseData, t.histid);
-        } catch {}
-      }
-      tramitesForText.push(t);
-    }
+    // NLM limit: 50 sources per notebook
+    const MAX_SOURCES = 50;
+    const tramites = state.tramites;
+    let successCount = 0;
+    let failCount = 0;
+    let skipped = 0;
 
-    // Build text blocks - one consolidated source with all tramites info
-    const headerText = [
+    // First: upload a summary source with case metadata
+    const summaryText = [
       `EXPEDIENTE: ${expNum}`,
       `CARATULA: ${caratula}`,
       `ACTOR: ${caseData.acto || caseData.actor || 'N/D'}`,
       `DEMANDADO: ${caseData.dema || caseData.demandado || 'N/D'}`,
       `JUZGADO: ${caseData.juzgado?.dscr || 'N/D'}`,
       `TIPO: ${caseData.tipo_proceso || 'N/D'}`,
-      `TOTAL TRAMITES: ${state.tramites.length}`,
+      `TOTAL TRAMITES: ${tramites.length}`,
       '',
-      '═══════════════════════════════════',
-      '',
+      'INDICE DE TRAMITES:',
+      ...tramites.map((t, i) => `${i + 1}. ${t.fecha || 'S/F'} - ${t.dscr || 'Sin descripcion'}${t.firm ? ' [Firmado]' : ''}`),
     ].join('\n');
 
-    const tramitesTexts = tramitesForText.map((t, i) => {
-      const text = t.texto ? htmlToPlainText(t.texto) : '';
-      const parts = [`[${i + 1}] ${t.fecha || 'S/F'} - ${t.dscr || 'Sin descripcion'}`];
-      if (text) parts.push(text);
-      if (t.firm) parts.push(`[Firmado: ${t.fechaFirma || 'Si'}]`);
-      return parts.join('\n');
-    });
+    progressText.textContent = 'Subiendo resumen del expediente...';
+    const summaryResult = await nlmAddSource(nlmTab.id, projectId, `Expediente ${expNum} - Resumen`, summaryText);
+    if (summaryResult) successCount++; else failCount++;
+    await sleep(1000);
 
-    const fullText = headerText + tramitesTexts.join('\n\n---\n\n');
+    // Then: upload each tramite as individual source
+    const maxTramites = Math.min(tramites.length, MAX_SOURCES - 1); // -1 for summary
 
-    // Step 6: Add text sources
-    progressText.textContent = 'Subiendo fuentes de texto...';
-    progressFill.style.width = '50%';
+    for (let i = 0; i < maxTramites; i++) {
+      const t = tramites[i];
+      const pct = 20 + Math.round((i / maxTramites) * 75);
+      progressFill.style.width = `${pct}%`;
 
-    // Split into chunks if text is very long (NLM ~500KB per source limit)
-    const MAX_TEXT_SIZE = 400000;
-    const textChunks = [];
-    if (fullText.length > MAX_TEXT_SIZE) {
-      let currentChunk = headerText;
-      let chunkNum = 1;
-      for (const tt of tramitesTexts) {
-        if ((currentChunk + tt).length > MAX_TEXT_SIZE && currentChunk.length > headerText.length) {
-          textChunks.push({ title: `${notebookTitle} - Parte ${chunkNum}`, text: currentChunk });
-          chunkNum++;
-          currentChunk = headerText;
-        }
-        currentChunk += tt + '\n\n---\n\n';
+      const num = String(i + 1).padStart(3, '0');
+      const sourceTitle = `${num} - ${t.fecha || 'S/F'} - ${t.dscr || 'Tramite'}`;
+      progressText.textContent = `[${i + 1}/${maxTramites}] ${t.dscr || 'Tramite'}...`;
+
+      // Fetch text if not cached
+      if (!t.texto && t.link) {
+        try {
+          t.texto = await getTramiteText(caseData, t.histid);
+        } catch {}
       }
-      if (currentChunk.length > headerText.length) {
-        textChunks.push({ title: `${notebookTitle} - Parte ${chunkNum}`, text: currentChunk });
+
+      const plainText = t.texto ? htmlToPlainText(t.texto) : '';
+      if (!plainText || plainText.length < 10) {
+        skipped++;
+        continue;
       }
-    } else {
-      textChunks.push({ title: `Expediente ${expNum} - ${caratula}`, text: fullText });
+
+      // Build source content
+      const sourceContent = [
+        `FECHA: ${t.fecha || 'N/D'}`,
+        `TIPO: ${t.dscr || 'N/D'}`,
+        t.firm ? `FIRMADO: ${t.fechaFirma || 'Si'}` : null,
+        '',
+        plainText,
+      ].filter(Boolean).join('\n');
+
+      const result = await nlmAddSource(nlmTab.id, projectId, sourceTitle, sourceContent);
+      if (result) successCount++; else failCount++;
+
+      // Rate limiting - 1.5s between requests
+      if (i < maxTramites - 1) await sleep(1500);
     }
 
-    let successCount = 0;
-    let failCount = 0;
-
-    for (let i = 0; i < textChunks.length; i++) {
-      const chunk = textChunks[i];
-      const pct = 50 + Math.round((i / textChunks.length) * 45);
-      progressFill.style.width = `${pct}%`;
-      progressText.textContent = textChunks.length > 1
-        ? `Subiendo parte ${i + 1}/${textChunks.length}...`
-        : 'Subiendo expediente completo...';
-
-      const textResult = await chrome.scripting.executeScript({
-        target: { tabId: nlmTab.id },
-        world: 'MAIN',
-        func: async (pid, title, content) => {
-          try {
-            const b = window.__SAE_NLM_BRIDGE;
-            if (!b?.ready) return { success: false, error: 'Bridge no disponible' };
-            const p = b.getSessionParams();
-            if (!p.at) return { success: false, error: 'Token CSRF no encontrado', params: { at: !!p.at, fsid: !!p.fsid, bl: !!p.bl } };
-            const result = await b.addTextSource(pid, title, content);
-            return { success: true, result: JSON.stringify(result)?.substring(0, 500) };
-          } catch (err) {
-            return { success: false, error: err.message, stack: err.stack?.substring(0, 300) };
-          }
-        },
-        args: [projectId, chunk.title, chunk.text],
-      });
-
-      const res = textResult?.[0]?.result;
-      console.log('[SAE NLM] addTextSource result:', JSON.stringify(res));
-      if (res?.success) {
-        successCount++;
-      } else {
-        console.error('[SAE NLM] Text source FAILED:', res);
-        failCount++;
-      }
-      if (i < textChunks.length - 1) await sleep(1500);
+    if (tramites.length > MAX_SOURCES - 1) {
+      skipped += tramites.length - maxTramites;
     }
 
     // Done!
     progressFill.style.width = '100%';
-    const msg = failCount > 0
-      ? `NotebookLM: ${successCount} fuente(s) subidas, ${failCount} fallaron. Revisa la consola de NotebookLM.`
-      : `NotebookLM: expediente cargado como ${successCount} fuente(s)`;
+    const parts = [`${successCount} fuente(s) subidas`];
+    if (failCount > 0) parts.push(`${failCount} fallaron`);
+    if (skipped > 0) parts.push(`${skipped} sin texto`);
+    const msg = `NotebookLM: ${parts.join(', ')}`;
     progressText.textContent = msg;
     showToast(msg, failCount > 0 ? 'error' : 'success');
 
@@ -2283,6 +2253,31 @@ async function sendToNotebookLM() {
     btn.disabled = false;
     btn.textContent = 'Enviar a NotebookLM';
     setTimeout(() => progressEl.classList.add('hidden'), 5000);
+  }
+}
+
+// Helper: add a text source to NotebookLM via bridge
+async function nlmAddSource(tabId, projectId, title, content) {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async (pid, t, c) => {
+        try {
+          const b = window.__SAE_NLM_BRIDGE;
+          if (!b?.ready) return { success: false, error: 'Bridge no disponible' };
+          await b.addTextSource(pid, t, c);
+          return { success: true };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      },
+      args: [projectId, title, content],
+    });
+    return result?.[0]?.result?.success || false;
+  } catch (err) {
+    console.warn('[SAE NLM] Source error:', title, err.message);
+    return false;
   }
 }
 
