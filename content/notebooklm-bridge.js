@@ -167,12 +167,17 @@
 
   // Add a text source (Copied Text)
   async function addTextSource(projectId, title, textContent) {
-    // izAoDd: add inline text source
     const textLength = new TextEncoder().encode(textContent).length;
     console.log(`[SAE NLM] addTextSource: project=${projectId}, title="${title}", textLen=${textLength}`);
 
-    const payload = [[[null, [title, textContent]], null, projectId, 1]];
-    console.log('[SAE NLM] Payload structure:', JSON.stringify(payload).substring(0, 200));
+    // Real payload format captured from NotebookLM UI:
+    // [[[null, [title, content], null, 2, null, null, null, null, null, null, 1]], "projectId", [2], [1,null,null,null,null,null,null,null,null,null,[1]]]
+    const payload = [
+      [[null, [title, textContent], null, 2, null, null, null, null, null, null, 1]],
+      projectId,
+      [2],
+      [1, null, null, null, null, null, null, null, null, null, [1]]
+    ];
 
     const result = await batchExecute('izAoDd', payload, {
       'x-goog-ext-353267353-jspb': `[null,null,null,${textLength}]`,
