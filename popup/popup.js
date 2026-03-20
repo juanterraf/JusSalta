@@ -2188,6 +2188,10 @@ async function sendToNotebookLM() {
     if (summaryResult) successCount++; else failCount++;
     await sleep(1000);
 
+    // Get Gemini API key for PDF extraction
+    const geminiKeyData = await chrome.storage.local.get('sae_gemini_key');
+    const geminiKey = geminiKeyData.sae_gemini_key || null;
+
     // Then: upload each tramite as individual source
     const maxTramites = Math.min(tramites.length, MAX_SOURCES - 1); // -1 for summary
 
@@ -2200,32 +2204,83 @@ async function sendToNotebookLM() {
       const sourceTitle = `${num} - ${t.fecha || 'S/F'} - ${t.dscr || 'Tramite'}`;
       progressText.textContent = `[${i + 1}/${maxTramites}] ${t.dscr || 'Tramite'}...`;
 
-      // Fetch text if not cached
+      // 1. Get text content from API
       if (!t.texto && t.link) {
         try {
           t.texto = await getTramiteText(caseData, t.histid);
         } catch {}
       }
+      let plainText = t.texto ? htmlToPlainText(t.texto) : '';
 
-      const plainText = t.texto ? htmlToPlainText(t.texto) : '';
-      if (!plainText || plainText.length < 10) {
-        skipped++;
-        continue;
+      // 2. Try to get PDF content (main document or attachments)
+      let pdfText = '';
+      const hasPdf = t.link || (Array.isArray(t.archivos) && t.archivos.length > 0);
+
+      if (hasPdf && geminiKey) {
+        try {
+          progressText.textContent = `[${i + 1}/${maxTramites}] Extrayendo PDF: ${t.dscr || ''}...`;
+
+          // Try main document PDF
+          let pdfBase64 = null;
+          try {
+            const pdfUrl = await getTramitePdfUrl(caseData, t.histid);
+            if (pdfUrl) {
+              const pdfData = await downloadUrl(pdfUrl);
+              if (pdfData?.base64) pdfBase64 = pdfData.base64;
+            }
+          } catch {}
+
+          // If no main PDF, try first attachment
+          if (!pdfBase64 && Array.isArray(t.archivos) && t.archivos.length > 0) {
+            try {
+              const archivo = t.archivos[0];
+              const fileUrl = await getAttachedFileUrl(caseData, t.histid, archivo.nombre);
+              if (fileUrl) {
+                const fileData = await downloadUrl(fileUrl);
+                if (fileData?.base64) pdfBase64 = fileData.base64;
+              }
+            } catch {}
+          }
+
+          // Extract text from PDF using Gemini
+          if (pdfBase64) {
+            pdfText = await extractPdfTextWithGemini(geminiKey, pdfBase64);
+          }
+        } catch (err) {
+          console.warn(`[SAE NLM] PDF extraction failed for ${sourceTitle}:`, err.message);
+        }
       }
 
-      // Build source content
-      const sourceContent = [
+      // 3. Build final source content
+      const contentParts = [
         `FECHA: ${t.fecha || 'N/D'}`,
         `TIPO: ${t.dscr || 'N/D'}`,
         t.firm ? `FIRMADO: ${t.fechaFirma || 'Si'}` : null,
         '',
-        plainText,
-      ].filter(Boolean).join('\n');
+      ].filter(Boolean);
+
+      if (plainText && plainText.length >= 10) {
+        contentParts.push('--- TEXTO DEL TRAMITE ---', plainText);
+      }
+      if (pdfText && pdfText.length >= 10) {
+        if (plainText && plainText.length >= 10) {
+          contentParts.push('', '--- CONTENIDO DEL DOCUMENTO PDF ---');
+        }
+        contentParts.push(pdfText);
+      }
+
+      const sourceContent = contentParts.join('\n');
+
+      // Skip only if we have NO content at all
+      if (sourceContent.length < 50) {
+        skipped++;
+        continue;
+      }
 
       const result = await nlmAddSource(nlmTab.id, projectId, sourceTitle, sourceContent);
       if (result) successCount++; else failCount++;
 
-      // Rate limiting - 1.5s between requests
+      // Rate limiting
       if (i < maxTramites - 1) await sleep(1500);
     }
 
@@ -2309,6 +2364,45 @@ function waitForTabLoad(tabId, timeout = 10000) {
 // Helper: sleep
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+// Extract text from a PDF using Gemini's vision/multimodal API
+async function extractPdfTextWithGemini(apiKey, base64Pdf) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'application/pdf',
+              data: base64Pdf,
+            },
+          },
+          {
+            text: 'Extraé todo el texto de este documento PDF. Devolvé SOLO el texto completo, sin comentarios ni explicaciones. Mantene el formato original lo mejor posible.',
+          },
+        ],
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 8000,
+      },
+    }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Gemini PDF: ${resp.status} ${err.substring(0, 100)}`);
+  }
+
+  const json = await resp.json();
+  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini no devolvio texto del PDF');
+  return text;
 }
 
 async function callGemini(apiKey, prompt) {
