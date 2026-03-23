@@ -1,51 +1,55 @@
 // ============================================
-// SAE Tucumán - Content Script (ISOLATED world)
+// IOL Salta - Content Script (ISOLATED world)
+// Injected on plataforma.justiciasalta.gov.ar/*
+// - Relays intercepted data & JWT to extension
+// - Injects "Monitorear" button in portal UI
 // ============================================
 
 (() => {
   'use strict';
 
-  // Intercepted data from the SAE app's own API calls
-  let interceptedProceeding = null;
-  let interceptedStories = null;
+  let interceptedExpediente = null;
+  let interceptedActuaciones = null;
+  let monitorButtonInjected = false;
 
-  // Captcha token received from MAIN world
-  let lastCaptchaToken = null;
-  let captchaWaiters = [];
-
-  // Listen for messages from MAIN world
+  // Listen for data from MAIN world interceptor
   window.addEventListener('message', (event) => {
-    if (event.data?.type === 'SAE_EXT_INTERCEPTED') {
-      interceptedProceeding = event.data.proceeding || null;
-      interceptedStories = event.data.stories || null;
-      // Data intercepted from SAE app
+    if (event.source !== window) return;
+
+    // Intercepted API data
+    if (event.data?.type === 'IOL_EXT_INTERCEPTED') {
+      if (event.data.expediente) {
+        interceptedExpediente = event.data.expediente;
+      }
+      if (event.data.actuaciones) {
+        interceptedActuaciones = event.data.actuaciones;
+      }
+      if (interceptedExpediente) {
+        injectMonitorButton();
+      }
     }
-    if (event.data?.type === 'SAE_EXT_CAPTCHA_RESULT') {
-      lastCaptchaToken = event.data.token || null;
-      // Captcha token received
-      // Resolve all waiters
-      captchaWaiters.forEach(resolve => resolve(lastCaptchaToken));
-      captchaWaiters = [];
+
+    // Intercepted JWT token - save to extension storage
+    if (event.data?.type === 'IOL_EXT_TOKEN' && event.data.token) {
+      chrome.runtime.sendMessage({
+        type: 'SAVE_TOKEN',
+        token: event.data.token,
+      }).catch(() => {});
     }
   });
 
-  // ---- Message Handler (from popup) ----
+  // ---- Message Handler (from popup / background) ----
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.type) {
       case 'GET_CURRENT_CASE':
-        if (interceptedProceeding) {
-          sendResponse({ caseData: interceptedProceeding, stories: interceptedStories });
+        if (interceptedExpediente) {
+          sendResponse({ expediente: interceptedExpediente, actuaciones: interceptedActuaciones });
         } else {
+          // Wait a bit for interception
           setTimeout(() => {
-            sendResponse({ caseData: interceptedProceeding, stories: interceptedStories });
-          }, 1000);
+            sendResponse({ expediente: interceptedExpediente, actuaciones: interceptedActuaciones });
+          }, 1500);
         }
-        return true;
-
-      case 'GET_CAPTCHA_TOKEN':
-        // The popup already injected inject-captcha.js into MAIN world before calling this.
-        // Wait for the postMessage result.
-        waitForCaptcha().then(token => sendResponse({ token }));
         return true;
 
       case 'SHOW_TOAST':
@@ -54,32 +58,93 @@
     }
   });
 
-  function waitForCaptcha() {
-    return new Promise((resolve) => {
-      // If we already have a recent token (within last 500ms from the injection), return it
-      if (lastCaptchaToken) {
-        const token = lastCaptchaToken;
-        lastCaptchaToken = null; // consume it
-        resolve(token);
+  // ---- Inject "Monitorear" button into IOL Angular UI ----
+  function injectMonitorButton() {
+    if (monitorButtonInjected) return;
+
+    const tryInject = () => {
+      // Look for the expediente detail area in the Angular SPA
+      const candidates = document.querySelectorAll(
+        '.expediente-header, .detalle-expediente, [class*="expediente"], ' +
+        '.card-header, .panel-heading, .mat-card-title, .mat-toolbar, ' +
+        'h2, h3, .page-title'
+      );
+
+      for (const el of candidates) {
+        if (el.querySelector('.iol-ext-monitor-btn')) return;
+
+        const text = el.textContent || '';
+        if (text.includes('Expediente') || text.includes('expediente') ||
+            text.includes('Actuaciones') || text.includes('Detalle')) {
+          const btn = document.createElement('button');
+          btn.className = 'iol-ext-monitor-btn';
+          btn.innerHTML = '\uD83D\uDCCC Monitorear';
+          btn.title = 'Agregar a seguimiento en IOL Salta Extension';
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            addToMonitorFromPage();
+          });
+          el.appendChild(btn);
+          monitorButtonInjected = true;
+          return;
+        }
+      }
+    };
+
+    tryInject();
+
+    if (!monitorButtonInjected) {
+      const observer = new MutationObserver(() => {
+        tryInject();
+        if (monitorButtonInjected) observer.disconnect();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => observer.disconnect(), 10000);
+    }
+  }
+
+  async function addToMonitorFromPage() {
+    if (!interceptedExpediente) {
+      showToast('No se detectó expediente', 'error');
+      return;
+    }
+
+    try {
+      const exp = interceptedExpediente;
+      const data = await chrome.storage.local.get('iol_followed');
+      const followed = data.iol_followed || [];
+      const expId = exp.expId || exp.id || exp.expedienteId;
+
+      if (followed.some(f => String(f.expId) === String(expId))) {
+        showToast('Ya estás monitoreando este expediente', 'info');
         return;
       }
-      // Otherwise wait for it
-      captchaWaiters.push((token) => resolve(token));
-      // Timeout after 8 seconds
-      setTimeout(() => {
-        const idx = captchaWaiters.indexOf(resolve);
-        if (idx >= 0) captchaWaiters.splice(idx, 1);
-        resolve(null);
-      }, 8000);
-    });
+
+      followed.push({
+        expId,
+        numero: exp.numero || exp.nroExpediente || '',
+        caratula: exp.caratula || exp.nombre || '',
+        organismo: exp.organismo || exp.juzgado || '',
+        lastActId: 0,
+        lastCheck: Date.now(),
+        newCount: 0,
+      });
+
+      await chrome.storage.local.set({ iol_followed: followed });
+      chrome.runtime.sendMessage({ type: 'UPDATE_ALARM', count: followed.length });
+      showToast('Expediente agregado a seguimiento', 'success');
+    } catch (err) {
+      showToast('Error al agregar: ' + err.message, 'error');
+    }
   }
 
   // ---- Toast ----
   function showToast(message, type = 'info') {
-    const existing = document.querySelector('.sae-ext-toast');
+    const existing = document.querySelector('.iol-ext-toast');
     if (existing) existing.remove();
     const toast = document.createElement('div');
-    toast.className = `sae-ext-toast ${type}`;
+    toast.className = `iol-ext-toast ${type}`;
     toast.textContent = message;
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('show'));
@@ -89,17 +154,16 @@
     }, 3000);
   }
 
-  // ---- Monitor URL changes ----
+  // ---- Monitor URL changes (Angular SPA) ----
   let lastUrl = location.href;
-  const observer = new MutationObserver(() => {
+  const urlObserver = new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
-      interceptedProceeding = null;
-      interceptedStories = null;
+      interceptedExpediente = null;
+      interceptedActuaciones = null;
+      monitorButtonInjected = false;
       chrome.runtime.sendMessage({ type: 'URL_CHANGED', url: lastUrl }).catch(() => {});
     }
   });
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // Content script loaded
+  urlObserver.observe(document.body, { childList: true, subtree: true });
 })();

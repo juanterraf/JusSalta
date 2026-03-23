@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SAE Tucuman</title>
+  <title>IOL Salta</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -12,12 +12,12 @@
     <header class="header">
       <div class="header-title">
         <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 6v6l4 2"/>
         </svg>
-        <h1>SAE Tucuman</h1>
+        <h1>IOL Salta</h1>
       </div>
-      <p class="header-subtitle">Asistente de Expedientes Judiciales</p>
+      <p class="header-subtitle">Seguimiento de Expedientes Judiciales</p>
     </header>
 
     <!-- Navigation Tabs -->
@@ -32,30 +32,8 @@
     <!-- ========== SEARCH TAB ========== -->
     <section id="tab-search" class="tab-content active">
       <div class="form-group">
-        <label for="sel-center">Centro Judicial</label>
-        <select id="sel-center">
-          <option value="">Cargando...</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="sel-jurisdiction">Fuero</label>
-        <select id="sel-jurisdiction">
-          <option value="">Seleccione un centro primero</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="inp-number">N Expediente</label>
-        <input type="text" id="inp-number" placeholder="Ej: 1234/20">
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="inp-actor">Actor</label>
-          <input type="text" id="inp-actor" placeholder="Apellido">
-        </div>
-        <div class="form-group">
-          <label for="inp-accused">Demandado</label>
-          <input type="text" id="inp-accused" placeholder="Apellido">
-        </div>
+        <label for="inp-search">Buscar por numero, caratula o partes</label>
+        <input type="text" id="inp-search" placeholder="Ej: 12345, Garcia, homicidio...">
       </div>
       <button id="btn-search" class="btn btn-primary" disabled>
         <span class="btn-text">Buscar</span>
@@ -80,7 +58,7 @@
     <!-- ========== CURRENT CASE TAB ========== -->
     <section id="tab-current" class="tab-content">
       <div id="current-empty" class="empty-state">
-        <p>Navega a un expediente en el portal SAE o busca uno desde la pestaña Buscar</p>
+        <p>Navega a un expediente en el portal IOL o busca uno desde la pestana Buscar</p>
       </div>
       <div id="current-case" class="hidden">
         <div class="case-header">
@@ -88,14 +66,13 @@
           <span id="case-number" class="case-badge"></span>
         </div>
         <div class="case-meta">
-          <div class="meta-row"><span class="meta-label">Actor</span><span id="case-actor" class="meta-value"></span></div>
-          <div class="meta-row"><span class="meta-label">Demandado</span><span id="case-accused" class="meta-value"></span></div>
           <div class="meta-row"><span class="meta-label">Juzgado</span><span id="case-court" class="meta-value"></span></div>
-          <div class="meta-row"><span class="meta-label">Tipo</span><span id="case-type" class="meta-value"></span></div>
+          <div class="meta-row"><span class="meta-label">Estado</span><span id="case-estado" class="meta-value"></span></div>
+          <div class="meta-row"><span class="meta-label">CUIJ</span><span id="case-cuij" class="meta-value"></span></div>
         </div>
 
         <div class="action-buttons">
-          <button id="btn-follow-case" class="btn btn-follow">Seguir expediente</button>
+          <button id="btn-follow-case" class="btn btn-follow">Monitorear expediente</button>
           <div class="form-row">
             <button id="btn-summary-last" class="btn btn-secondary">Ultimo tramite</button>
             <button id="btn-summary-full" class="btn btn-secondary">Informe general</button>
@@ -126,7 +103,7 @@
         </div>
 
         <div id="tramites-section" class="hidden">
-          <h3 class="section-title">Tramites</h3>
+          <h3 class="section-title">Actuaciones</h3>
           <div id="tramites-list" class="tramites-list"></div>
         </div>
       </div>
@@ -135,7 +112,7 @@
     <!-- ========== MONITOR TAB ========== -->
     <section id="tab-monitor" class="tab-content">
       <div id="monitor-empty" class="empty-state">
-        <p>No estas siguiendo ningun expediente.<br>Abri un expediente y usa "Seguir expediente".</p>
+        <p>No estas monitoreando ningun expediente.<br>Abri un expediente y usa "Monitorear expediente".</p>
       </div>
       <div id="monitor-content" class="hidden">
         <div class="monitor-toolbar">
@@ -183,21 +160,11 @@
           </div>
           <p class="filter-hint">Las demas filas se marcaran como "Omitido"</p>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="sel-import-center">Centro Judicial</label>
-            <select id="sel-import-center"></select>
-          </div>
-          <div class="form-group">
-            <label for="sel-import-jurisdiction">Fuero</label>
-            <select id="sel-import-jurisdiction"></select>
-          </div>
-        </div>
         <div id="import-preview-section">
           <h4 class="section-title">Vista previa</h4>
           <div id="import-preview" class="import-preview"></div>
         </div>
-        <button id="btn-start-import" class="btn btn-primary" disabled>Iniciar consulta</button>
+        <button id="btn-start-import" class="btn btn-primary">Iniciar consulta</button>
       </div>
 
       <div id="import-progress" class="hidden">
@@ -219,19 +186,19 @@
       <div class="info-section">
         <h3>Como usar</h3>
         <ul>
-          <li>Abri <strong>consultaexpedientes.justucuman.gov.ar</strong> en otra pestaña</li>
-          <li>Navega a cualquier expediente y la extension lo detecta automaticamente</li>
-          <li>Tambien podes buscar desde la pestaña <strong>Buscar</strong> seleccionando centro y fuero</li>
+          <li>Busca expedientes desde la pestana <strong>Buscar</strong> por numero, caratula o partes</li>
+          <li>Tambien podes navegar en <strong>plataforma.justiciasalta.gov.ar</strong> y la extension detecta el expediente</li>
+          <li>Usa "Monitorear expediente" para recibir notificaciones de novedades</li>
         </ul>
       </div>
 
       <div class="info-section">
         <h3>Seguimiento</h3>
         <ul>
-          <li>Usa "Seguir expediente" para monitorear cambios</li>
-          <li>La extension verifica automaticamente cada 30 minutos</li>
+          <li>Usa "Monitorear expediente" para seguir cambios</li>
+          <li>La extension verifica automaticamente cada 15 minutos</li>
           <li>Si hay movimientos nuevos, recibis una notificacion de Chrome</li>
-          <li>Los expedientes con novedades se resaltan en la pestaña Seguimiento</li>
+          <li>Los expedientes con novedades se resaltan en la pestana Seguimiento</li>
         </ul>
       </div>
 
@@ -239,18 +206,16 @@
         <h3>Importacion masiva</h3>
         <ul>
           <li>Prepara un Excel (.xlsx) o CSV con una columna de numeros de expediente</li>
-          <li>Formato esperado: <code>1234/23</code> o <code>1234-2023</code></li>
-          <li>Selecciona centro judicial y fuero para la busqueda</li>
-          <li>La extension buscara en todos los fueros si no encuentra en el seleccionado</li>
-          <li>Necesitas tener la pagina del SAE abierta en el buscador (para el captcha)</li>
+          <li>La extension buscara cada expediente en la API publica</li>
+          <li>Podes exportar los resultados y seguir todos los encontrados</li>
         </ul>
       </div>
 
       <div class="info-section">
         <h3>Descarga</h3>
         <ul>
-          <li>Desde un expediente, usa "Descargar todo (ZIP)" para obtener PDFs y textos</li>
-          <li>Cada tramite se descarga como PDF si esta disponible, o como texto</li>
+          <li>Desde un expediente, usa "Descargar todo (ZIP)" para obtener PDFs</li>
+          <li>Cada actuacion se descarga como PDF si esta disponible</li>
           <li>Se incluye un informe general automatico en el ZIP</li>
         </ul>
       </div>
@@ -259,12 +224,21 @@
         <h3>Informe con IA</h3>
         <ul>
           <li>Obtene una API key gratis en <strong>aistudio.google.com</strong></li>
-          <li>Pegala en la configuracion de la pestaña Expediente</li>
+          <li>Pegala en la configuracion de abajo</li>
           <li>Desde un expediente, usa "Informe IA" para obtener un analisis inteligente</li>
         </ul>
       </div>
 
       <hr class="info-divider">
+
+      <div class="info-section">
+        <h3>Configuracion</h3>
+        <div class="form-group">
+          <label for="inp-poll-interval">Intervalo de verificacion (minutos)</label>
+          <input type="number" id="inp-poll-interval" min="5" max="120" value="15">
+        </div>
+        <button id="btn-save-options" class="btn btn-secondary" style="margin-top:4px">Guardar intervalo</button>
+      </div>
 
       <div class="info-section">
         <h3>Configuracion IA</h3>
